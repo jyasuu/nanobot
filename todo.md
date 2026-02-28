@@ -693,3 +693,110 @@ dependencies = [
     "json-repair>=0.57.0,<1.0.0",
 ]
 ```
+
+
+
+
+## GitLab Webhook Integration as Chat Channel in nanobot
+This codemap illustrates nanobot's channel architecture for integrating GitLab webhooks as a chat interface. The system uses an abstract BaseChannel [1a] that all platforms implement, with messages flowing through async queues [2a] and being dispatched by ChannelManager [2d]. GitLab would follow the same pattern as existing channels, using HTTP webhooks for inbound (similar to Slack's Socket Mode [3b]) and REST API for outbound replies (like Discord's HTTP client [4c]). Configuration would be added to the schema [5a-5c] alongside other channels.
+### 1. Channel Architecture - Base to Concrete Implementation
+Shows the abstract base class pattern that all chat channels follow, which GitLab would implement
+### 1a. Abstract Base Channel (`base.py:12`)
+All chat integrations extend this abstract base class
+```text
+class BaseChannel(ABC):
+```
+### 1b. Start Method Requirement (`base.py:34`)
+Each channel must implement how it connects and listens
+```text
+@abstractmethod
+    async def start(self) -> None:
+```
+### 1c. Message to Bus (`base.py:123`)
+Channels forward inbound messages to the central message bus
+```text
+await self.bus.publish_inbound(msg)
+```
+### 1d. Channel Registration (`manager.py:65`)
+Manager initializes and registers each enabled channel
+```text
+self.channels["discord"] = DiscordChannel(
+```
+### 2. Message Flow - Inbound to Outbound
+Traces how messages flow through the system from inbound webhook to outbound reply
+### 2a. Inbound Queue (`queue.py:17`)
+Async queue decouples channels from agent processing
+```text
+self.inbound: asyncio.Queue[InboundMessage] = asyncio.Queue()
+```
+### 2b. Message Structure (`events.py:12`)
+InboundMessage carries channel, sender, chat, content, and metadata
+```text
+channel: str  # telegram, discord, slack, whatsapp
+```
+### 2c. Session Key (`events.py:23`)
+Unique identifier keeps conversation context separate
+```text
+return f"{self.channel}:{self.chat_id}"
+```
+### 2d. Outbound Dispatch (`manager.py:196`)
+Manager routes outbound messages back to the correct channel
+```text
+channel = self.channels.get(msg.channel)
+```
+### 2e. Send Reply (`manager.py:199`)
+Channel's send() method posts the reply back to the platform
+```text
+await channel.send(msg)
+```
+### 3. Webhook Pattern - Slack Socket Mode Example
+Shows how an existing channel handles real-time events, similar to GitLab webhooks
+### 3a. WebSocket Client (`slack.py:45`)
+Slack uses Socket Mode for real-time events
+```text
+self._socket_client = SocketModeClient(
+```
+### 3b. Connect and Listen (`slack.py:61`)
+Starts listening for events from Slack
+```text
+await self._socket_client.connect()
+```
+### 3c. API Reply (`slack.py:90`)
+Sends replies via Slack's REST API
+```text
+await self._web_client.chat_postMessage(
+```
+### 4. HTTP-based Pattern - Email Polling Example
+Shows HTTP-based communication pattern that GitLab webhook would follow
+### 4a. Fetch Messages (`email.py:79`)
+Email channel polls IMAP for new messages
+```text
+inbound_items = await asyncio.to_thread(self._fetch_new_messages)
+```
+### 4b. Handle Inbound (`email.py:90`)
+Processes each message and forwards to bus
+```text
+await self._handle_message(
+```
+### 4c. HTTP Client (`discord.py:66`)
+Discord uses httpx for API calls (GitLab would too)
+```text
+self._http = httpx.AsyncClient(timeout=30.0)
+```
+### 5. Configuration Schema for New Channel
+Shows where to add GitLab configuration alongside existing channels
+### 5a. Channel Config Pattern (`schema.py:143`)
+Each channel has its own config class
+```text
+class SlackConfig(Base):
+```
+### 5b. Enable Flag (`schema.py:146`)
+Standard enabled flag for all channels
+```text
+enabled: bool = False
+```
+### 5c. Channel Registration (`schema.py:178`)
+ChannelsConfig aggregates all channel configs
+```text
+slack: SlackConfig = Field(default_factory=SlackConfig)
+```
